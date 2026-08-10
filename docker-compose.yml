@@ -1,0 +1,28 @@
+services:
+  api:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    ports:
+      - "8001:8001"
+    volumes:
+      - app_data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_APP_API_BASE_URL: ${VITE_APP_API_BASE_URL:-http://localhost:8001}
+        VITE_WOOBE_API_BASE_URL: ${VITE_WOOBE_API_BASE_URL:-http://localhost:8000}
+        VITE_WOOBE_EMBED_SCRIPT_URL: ${VITE_WOOBE_EMBED_SCRIPT_URL:-http://localhost:8081/chat/v1/embed.js}
+        VITE_WOOBE_IFRAME_BASE_URL: ${VITE_WOOBE_IFRAME_BASE_URL:-http://localhost:8081/chat/v1}
+    ports:
+      - "5174:80"
+    depends_on:
+      - api
+
+volumes:
+  app_data:
