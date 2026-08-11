@@ -1,28 +1,53 @@
+name: example-usage-woobe-001
+
 services:
   api:
     build:
       context: ./backend
+      dockerfile: Dockerfile
     env_file:
       - .env
+    restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "${APP_API_PORT:-8001}:8001"
     volumes:
       - app_data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
 
   web:
     build:
       context: ./frontend
+      dockerfile: Dockerfile
       args:
         VITE_APP_API_BASE_URL: ${VITE_APP_API_BASE_URL:-http://localhost:8001}
         VITE_WOOBE_API_BASE_URL: ${VITE_WOOBE_API_BASE_URL:-http://localhost:8000}
         VITE_WOOBE_EMBED_SCRIPT_URL: ${VITE_WOOBE_EMBED_SCRIPT_URL:-http://localhost:8081/chat/v1/embed.js}
         VITE_WOOBE_IFRAME_BASE_URL: ${VITE_WOOBE_IFRAME_BASE_URL:-http://localhost:8081/chat/v1}
+    restart: unless-stopped
     ports:
-      - "5174:80"
+      - "${APP_WEB_PORT:-5174}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1/ || exit 1
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
 
 volumes:
   app_data:
