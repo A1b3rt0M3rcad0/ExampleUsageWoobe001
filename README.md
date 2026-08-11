@@ -16,6 +16,74 @@ The end-user application is branded **Northstar Cloud**. It deliberately does no
 
 The integration follows the `feature/chatsurface-mvp` behavior currently implemented in ProjectRAI: server-side Session creation, Session Access Token issuance, `WoobeChat.mount(...)`, immutable Session release binding and token refresh without rebuilding the conversation.
 
+## Quick start with Docker
+
+The application is designed to boot with Docker Compose only.
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+```
+
+Then open:
+
+```text
+http://localhost:5174
+```
+
+Demo credentials:
+
+```text
+Email:    demo@northstar.local
+Password: demo123
+```
+
+Check container health with:
+
+```bash
+docker compose ps
+```
+
+Expected services:
+
+```text
+api   healthy   http://localhost:8001/health
+web   healthy   http://localhost:5174
+```
+
+Stop the stack with:
+
+```bash
+docker compose down
+```
+
+Reset the demo database as well:
+
+```bash
+docker compose down -v
+```
+
+### Woobe credentials
+
+Copying `.env.example` unchanged is enough to build and start the Northstar application. The embedded assistant requires an actual ChatSurface, so replace these values when you want the end-to-end Woobe integration to work:
+
+```dotenv
+WOOBE_CHAT_SURFACE_PUBLIC_ID=csf_...
+WOOBE_CHAT_SURFACE_ACCESS_KEY=woobe_surface_...
+WOOBE_TOOL_API_KEY=<same private key configured in the Woobe HTTP Tools>
+```
+
+The default local topology expects ProjectRAI/ChatSurface to be running on the host:
+
+```text
+Woobe API:     http://localhost:8000
+Woobe embed:   http://localhost:8081/chat/v1/embed.js
+Northstar API: http://localhost:8001
+Northstar Web: http://localhost:5174
+```
+
+Inside the backend container, `WOOBE_API_BASE_URL` defaults to `http://host.docker.internal:8000`, including Linux support through the Compose `host-gateway` mapping.
+
 ## Demo flow
 
 1. Sign in with the seeded demo account.
@@ -59,61 +127,23 @@ The permanent ChatSurface Access Key exists only in `backend` and is used for Se
 
 - Backend: FastAPI + SQLite + httpx
 - Frontend: React + TypeScript + Vite
-- Chat UI: the Woobe ChatSurface loader/iframe
-- Local orchestration: Docker Compose
+- Chat UI: Woobe ChatSurface loader/iframe
+- Runtime packaging: Docker Compose
 
-## Local setup
+## Docker behavior
 
-### 1. Configure the example
+`docker-compose.yml` builds both services, waits for the backend healthcheck before starting the web service, persists SQLite in a named volume, and configures both services with `restart: unless-stopped`.
 
-```bash
-cp .env.example .env
-```
-
-Set:
+Default host ports can be changed in `.env`:
 
 ```dotenv
-WOOBE_CHAT_SURFACE_PUBLIC_ID=...
-WOOBE_CHAT_SURFACE_ACCESS_KEY=...
-WOOBE_TOOL_API_KEY=...
+APP_API_PORT=8001
+APP_WEB_PORT=5174
 ```
 
-### 2. Run Woobe ChatSurface branch
+If those ports are changed, also update the browser-visible URLs and `FRONTEND_ORIGIN` in `.env` so CORS and ChatSurface origin validation continue to match.
 
-Run ProjectRAI from:
-
-```text
-feature/chatsurface-mvp
-```
-
-Expected local endpoints from that branch:
-
-```text
-Woobe API:        http://localhost:8000
-Chat embed:       http://localhost:8081/chat/v1/embed.js
-Control plane:    http://localhost:5173  # if running Woobe web separately
-```
-
-### 3. Start this application
-
-```bash
-docker compose up --build
-```
-
-Open:
-
-```text
-http://localhost:5174
-```
-
-Demo credentials:
-
-```text
-Email:    demo@northstar.local
-Password: demo123
-```
-
-### 4. Configure Tools in Woobe
+## Configure Tools in Woobe
 
 See [`docs/WOOBE_SETUP.md`](docs/WOOBE_SETUP.md).
 
