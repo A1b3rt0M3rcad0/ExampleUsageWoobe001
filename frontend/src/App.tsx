@@ -1,116 +1,32 @@
-import { Activity, FileText, LayoutDashboard, LogOut, ScrollText, TriangleAlert } from 'lucide-react'
+import { ArrowRight, BarChart3, Boxes, Check, ChevronRight, CircleDollarSign, FileText, LayoutDashboard, LogOut, PackageSearch, Search, ShoppingBag, Sparkles, Store, Truck, Users, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { api } from './api'
-import { AssistantPanel } from './components/AssistantPanel'
-import { LogsPage } from './pages/LogsPage'
-import { OverviewPage } from './pages/OverviewPage'
-import { ProblemsPage } from './pages/ProblemsPage'
-import { ReportsPage } from './pages/ReportsPage'
-import type { LogEntry, Me, Problem, Report } from './types'
+import { ChatSurfacePanel } from './components/ChatSurfacePanel'
+import type { AdminMe, Customer, Dashboard, InventoryRow, Order, Product, Report, Shipment } from './types'
 
+type Mode='store'|'admin'; type Page='dashboard'|'orders'|'inventory'|'customers'|'shipments'|'reports'
+const money=(v:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v)
+const dateTime=(v:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(v))
 
-type Page = 'overview' | 'logs' | 'problems' | 'reports'
+function ProductCard({product,onOpen}:{product:Product;onOpen:(p:Product)=>void}){return <article className="product-card" onClick={()=>onOpen(product)}><div className="product-art"><span>{product.category.slice(0,2).toUpperCase()}</span>{product.stock<=5&&product.stock>0&&<em>Últimas unidades</em>}{!product.available&&<em className="sold-out">Esgotado</em>}</div><div className="product-card-body"><span className="product-brand">{product.brand}</span><h3>{product.name}</h3><div className="product-price">{money(product.price)}</div><div className="product-card-footer"><span className={product.available?'stock-ok':'stock-out'}>{product.available?`${product.stock} em estoque`:'Indisponível'}</span><ChevronRight size={16}/></div></div></article>}
 
-export default function App() {
-  const [me, setMe] = useState<Me | null>(null)
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [problems, setProblems] = useState<Problem[]>([])
-  const [reports, setReports] = useState<Report[]>([])
-  const [page, setPage] = useState<Page>('overview')
-  const [loading, setLoading] = useState(true)
-  const [loginError, setLoginError] = useState<string | null>(null)
+function Storefront({onAdmin}:{onAdmin:()=>void}){const[products,setProducts]=useState<Product[]>([]);const[alternatives,setAlternatives]=useState<Product[]>([]);const[categories,setCategories]=useState<string[]>([]);const[query,setQuery]=useState('');const[category,setCategory]=useState('');const[selected,setSelected]=useState<Product|null>(null);const[loading,setLoading]=useState(true)
+ async function load(q=query,c=category){setLoading(true);try{const r=await api.storeProducts({query:q||undefined,category:c||undefined});setProducts(r.results);setAlternatives(r.alternatives)}finally{setLoading(false)}}
+ useEffect(()=>{Promise.all([api.storeProducts(),api.categories()]).then(([r,c])=>{setProducts(r.results);setCategories(c.categories);const slug=new URLSearchParams(window.location.search).get('product');if(slug){const found=r.results.find(p=>p.slug===slug);if(found)setSelected(found);else api.storeProducts({query:slug.replaceAll('-',' ')}).then(x=>setSelected(x.results[0]??null))}}).finally(()=>setLoading(false))},[])
+ function search(e:FormEvent){e.preventDefault();void load()}
+ return <div className="store-shell"><header className="store-header"><div className="brand-lockup"><span className="brand-glyph">M</span><div><strong>Mercury</strong><span>Store</span></div></div><nav className="store-nav"><a href="#catalogo">Produtos</a><a href="#categorias">Categorias</a><button onClick={onAdmin}>Merchant Console <ArrowRight size={15}/></button></nav></header><main className="store-main"><section className="hero"><div className="hero-copy"><span className="kicker"><Sparkles size={15}/> LOJA DEMONSTRATIVA</span><h1>Tecnologia para o seu setup, com ajuda para encontrar exatamente o que precisa.</h1><p>Catálogo totalmente mockado para demonstrar um e-commerce com Shopping Assistant operado pela Woobe.</p><form className="hero-search" onSubmit={search}><Search size={19}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder='Ex.: "TV de 27 polegadas", "headset bluetooth até R$ 500"'/><button>Buscar</button></form><div className="prompt-suggestions"><span>Experimente:</span><button onClick={()=>{setQuery('TV 27 polegadas');void load('TV 27 polegadas')}}>TV 27"</button><button onClick={()=>{setQuery('headset bluetooth');void load('headset bluetooth')}}>Headset bluetooth</button><button onClick={()=>{setQuery('teclado mecânico ABNT2');void load('teclado mecânico ABNT2')}}>Teclado ABNT2</button></div></div><div className="hero-stat-grid"><div><strong>43</strong><span>produtos mockados</span></div><div><strong>10</strong><span>categorias</span></div><div><strong>120</strong><span>dias simulados</span></div><div><strong>2</strong><span>ChatSurfaces</span></div></div></section><section className="catalog-layout" id="catalogo"><div className="catalog-column"><div className="section-title"><div><span className="kicker">CATÁLOGO</span><h2>Produtos</h2></div><span>{products.length} resultados</span></div><div className="category-strip" id="categorias"><button className={!category?'active':''} onClick={()=>{setCategory('');void load(query,'')}}>Todos</button>{categories.map(c=><button key={c} className={category===c?'active':''} onClick={()=>{setCategory(c);void load(query,c)}}>{c}</button>)}</div>{loading?<div className="empty-state">Carregando catálogo…</div>:products.length?<div className="product-grid">{products.map(p=><ProductCard key={p.id} product={p} onOpen={setSelected}/>)}</div>:<div className="empty-state"><PackageSearch size={32}/><strong>Nenhum produto encontrado</strong><span>Use o Shopping Assistant para pedir alternativas próximas.</span></div>}{alternatives.length>0&&<section className="alternatives"><h3>Opções próximas</h3><div className="product-grid compact">{alternatives.map(p=><ProductCard key={p.id} product={p} onOpen={setSelected}/>)}</div></section>}</div><ChatSurfacePanel kind="store"/></section></main>{selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><section className="product-modal" onClick={e=>e.stopPropagation()}><button className="modal-close" onClick={()=>setSelected(null)}><X/></button><div className="product-modal-art">{selected.category.slice(0,2).toUpperCase()}</div><div className="product-modal-copy"><span className="product-brand">{selected.brand} · {selected.category}</span><h2>{selected.name}</h2><p>{selected.description}</p><div className="product-price large">{money(selected.price)}</div><div className="availability-line"><span className={selected.available?'status-dot ok':'status-dot'}/>{selected.available?`${selected.stock} unidades disponíveis`:'Produto sem estoque'}</div><div className="location-card"><Store size={18}/><div><strong>Onde encontrar na loja</strong><span>Corredor {selected.aisle} · Prateleira {selected.shelf}</span></div></div><div className="attribute-grid">{Object.entries(selected.attributes).map(([k,v])=><div key={k}><span>{k.replaceAll('_',' ')}</span><strong>{String(v)}</strong></div>)}</div></div></section></div>}</div>}
 
-  async function loadData() {
-    const [meData, logData, problemData, reportData] = await Promise.all([
-      api.me(),
-      api.logs(),
-      api.problems(),
-      api.reports(),
-    ])
-    setMe(meData)
-    setLogs(logData)
-    setProblems(problemData)
-    setReports(reportData)
-  }
+function AdminLogin({onReady,onBack}:{onReady:(m:AdminMe)=>void;onBack:()=>void}){const[error,setError]=useState<string|null>(null);async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault();const d=new FormData(e.currentTarget);try{await api.login(String(d.get('email')),String(d.get('password')));onReady(await api.adminMe())}catch(x){setError(x instanceof Error?x.message:'Falha no login')}}return <main className="admin-login-shell"><button className="back-link" onClick={onBack}>← Voltar para a loja</button><section className="admin-login-card"><span className="brand-glyph large">M</span><span className="kicker">MERCURY MERCHANT</span><h1>Merchant Console</h1><p>Gerencie a operação fictícia e use o Merchant Assistant para analisar os dados mockados.</p><form onSubmit={submit}><label>E-mail<input name="email" defaultValue="admin@mercury.demo"/></label><label>Senha<input name="password" type="password" defaultValue="demo123"/></label>{error&&<div className="form-error">{error}</div>}<button className="primary-button">Entrar no console</button></form></section></main>}
 
-  useEffect(() => {
-    loadData().catch(() => setMe(null)).finally(() => setLoading(false))
-  }, [])
+function DashboardPage({d}:{d:Dashboard}){const max=Math.max(...d.top_categories.map(x=>x.revenue),1);return <div className="admin-page"><div className="admin-page-heading"><div><span className="kicker">VISÃO OPERACIONAL</span><h1>Dashboard</h1><p>Performance mockada dos últimos 15 dias.</p></div><span className="mock-badge">Synthetic dataset</span></div><div className="metric-grid"><div className="metric-card"><CircleDollarSign/><span>Receita · 15d</span><strong>{money(d.metrics.revenue_15d)}</strong></div><div className="metric-card"><ShoppingBag/><span>Pedidos · 15d</span><strong>{d.metrics.orders_15d}</strong></div><div className="metric-card"><Boxes/><span>Risco de ruptura</span><strong>{d.metrics.products_at_stockout_risk}</strong></div><div className="metric-card"><Truck/><span>Entregas atrasadas</span><strong>{d.metrics.delayed_shipments}</strong></div></div><div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><span className="kicker">CATEGORIAS</span><h2>Receita por categoria</h2></div></div><div className="bar-list">{d.top_categories.map(r=><div className="bar-row" key={r.category}><div><strong>{r.category}</strong><span>{money(r.revenue)}</span></div><div className="bar-track"><span style={{width:`${r.revenue/max*100}%`}}/></div></div>)}</div></section><section className="panel"><div className="panel-heading"><div><span className="kicker">TENDÊNCIA</span><h2>Produtos ganhando tração</h2></div></div><div className="rank-list">{d.rising_products.map((r,i)=><div className="rank-row" key={r.name}><span className="rank">{i+1}</span><div><strong>{r.name}</strong><span>{r.expected_units} un. previstas · estoque {r.current_stock}</span></div><em>+{r.trend_percent}%</em></div>)}</div></section></div><section className="panel"><div className="panel-heading"><div><span className="kicker">BEST SELLERS</span><h2>Produtos com melhor performance</h2></div></div><div className="table-wrap"><table><thead><tr><th>Produto</th><th>Unidades</th><th>Receita</th><th>Tendência</th></tr></thead><tbody>{d.top_products.map(r=><tr key={r.name}><td><strong>{r.name}</strong></td><td>{r.units}</td><td>{money(r.revenue)}</td><td><span className={r.growth_percent>=0?'trend-up':'trend-down'}>{r.growth_percent>0?'+':''}{r.growth_percent}%</span></td></tr>)}</tbody></table></div></section></div>}
 
-  async function onLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setLoginError(null)
-    const data = new FormData(event.currentTarget)
-    try {
-      await api.login(String(data.get('email') ?? ''), String(data.get('password') ?? ''))
-      await loadData()
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : 'Unable to sign in')
-    }
-  }
+function OrdersPage({rows}:{rows:Order[]}){return <div className="admin-page"><div className="admin-page-heading"><div><span className="kicker">OPERAÇÃO</span><h1>Pedidos</h1><p>Pedidos recentes do cenário fictício.</p></div></div><section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Status</th><th>Valor</th><th>Data</th></tr></thead><tbody>{rows.map(o=><tr key={o.id}><td><strong>{o.id}</strong></td><td>{o.customer_name}<small>{o.customer_segment}</small></td><td><span className={`status-chip ${o.status}`}>{o.status}</span></td><td>{money(o.total)}</td><td>{dateTime(o.created_at)}</td></tr>)}</tbody></table></div></section></div>}
+function InventoryPage({rows}:{rows:InventoryRow[]}){return <div className="admin-page"><div className="admin-page-heading"><div><span className="kicker">MERCHANDISING</span><h1>Estoque</h1><p>Estoque atual versus demanda prevista em 30 dias.</p></div></div><section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Produto</th><th>Categoria</th><th>Estoque</th><th>Demanda 30d</th><th>Risco</th></tr></thead><tbody>{rows.map(r=><tr key={r.product_id}><td><strong>{r.name}</strong></td><td>{r.category}</td><td>{r.stock}</td><td>{r.expected_30d_demand}</td><td><span className={`risk-chip ${r.stock_risk}`}>{r.stock_risk}</span></td></tr>)}</tbody></table></div></section></div>}
+function CustomersPage({rows}:{rows:Customer[]}){return <div className="admin-page"><div className="admin-page-heading"><div><span className="kicker">CLIENTES</span><h1>Customer base</h1><p>Clientes sintéticos e lifetime value calculado.</p></div></div><div className="customer-grid">{rows.slice(0,24).map(c=><article className="customer-card" key={c.id}><div className="avatar">{c.name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div><strong>{c.name}</strong><span>{c.email}</span></div><em>{c.segment}</em><div className="customer-stats"><span>{c.orders_count} pedidos</span><strong>{money(c.lifetime_value)}</strong></div></article>)}</div></div>}
+function ShipmentsPage({rows}:{rows:Shipment[]}){return <div className="admin-page"><div className="admin-page-heading"><div><span className="kicker">FULFILLMENT</span><h1>Entregas</h1><p>Status logístico mockado.</p></div></div><section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Envio</th><th>Pedido</th><th>Cliente</th><th>Transportadora</th><th>Status</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td><strong>{r.id}</strong></td><td>{r.order_id}</td><td>{r.customer_name}</td><td>{r.carrier}</td><td><span className={`status-chip ${r.status}`}>{r.status}</span></td></tr>)}</tbody></table></div></section></div>}
+function ReportsPage({rows}:{rows:Report[]}){return <div className="admin-page"><div className="admin-page-heading"><div><span className="kicker">ANÁLISE</span><h1>Relatórios</h1><p>Persistidos quando a Woobe chama create_sales_report.</p></div></div>{!rows.length?<div className="empty-state large"><FileText size={36}/><strong>Nenhum relatório gerado ainda</strong><span>Peça: “Gere um relatório dos últimos 15 dias com melhores, piores e previsão de 30 dias.”</span></div>:<div className="report-list">{rows.map(r=><article className="report-card" key={r.id}><div className="report-heading"><div><span className="kicker">{r.period_label}</span><h2>{r.title}</h2></div><span>{dateTime(r.created_at)}</span></div><p>{r.executive_summary}</p><div className="report-columns"><div><h3>Findings</h3><ul>{r.findings.map(x=><li key={x}><Check size={14}/>{x}</li>)}</ul></div><div><h3>Recommendations</h3><ul>{r.recommendations.map(x=><li key={x}><ArrowRight size={14}/>{x}</li>)}</ul></div></div></article>)}</div>}</div>}
 
-  async function logout() {
-    await api.logout()
-    setMe(null)
-  }
+function AdminConsole({me,onBack,onLogout}:{me:AdminMe;onBack:()=>void;onLogout:()=>void}){const[page,setPage]=useState<Page>('dashboard');const[d,setD]=useState<Dashboard|null>(null);const[o,setO]=useState<Order[]>([]);const[i,setI]=useState<InventoryRow[]>([]);const[c,setC]=useState<Customer[]>([]);const[s,setS]=useState<Shipment[]>([]);const[r,setR]=useState<Report[]>([]);async function load(){const[a,b,c1,d1,e,f]=await Promise.all([api.dashboard(),api.orders(),api.inventory(),api.customers(),api.shipments(),api.reports()]);setD(a);setO(b.orders);setI(c1.inventory);setC(d1.customers);setS(e.shipments);setR(f.reports)}useEffect(()=>{void load()},[]);const nav=useMemo(()=>[{id:'dashboard' as const,label:'Dashboard',icon:LayoutDashboard},{id:'orders' as const,label:'Pedidos',icon:ShoppingBag},{id:'inventory' as const,label:'Estoque',icon:Boxes},{id:'customers' as const,label:'Clientes',icon:Users},{id:'shipments' as const,label:'Entregas',icon:Truck},{id:'reports' as const,label:'Relatórios',icon:BarChart3}],[])
+ return <div className="admin-shell"><aside className="admin-sidebar"><div className="brand-lockup inverse"><span className="brand-glyph">M</span><div><strong>Mercury</strong><span>Merchant</span></div></div><nav>{nav.map(x=><button key={x.id} className={page===x.id?'active':''} onClick={()=>setPage(x.id)}><x.icon size={17}/>{x.label}</button>)}</nav><div className="admin-sidebar-footer"><button onClick={onBack}><Store size={16}/> Abrir loja</button><div className="merchant-user"><div className="avatar dark">AM</div><div><strong>{me.name}</strong><span>{me.email}</span></div></div><button onClick={onLogout}><LogOut size={16}/> Sair</button></div></aside><main className="admin-workspace"><section className="admin-content">{!d?<div className="empty-state">Carregando Merchant Console…</div>:<>{page==='dashboard'&&<DashboardPage d={d}/>} {page==='orders'&&<OrdersPage rows={o}/>} {page==='inventory'&&<InventoryPage rows={i}/>} {page==='customers'&&<CustomersPage rows={c}/>} {page==='shipments'&&<ShipmentsPage rows={s}/>} {page==='reports'&&<ReportsPage rows={r}/>}</>}</section><ChatSurfacePanel kind="admin" onActivity={()=>void load()}/></main></div>}
 
-  const nav = useMemo(() => [
-    { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
-    { id: 'logs' as const, label: 'Logs', icon: ScrollText },
-    { id: 'problems' as const, label: 'Problems', icon: TriangleAlert },
-    { id: 'reports' as const, label: 'Reports', icon: FileText },
-  ], [])
-
-  if (loading) return <div className="fullscreen-state"><Activity className="spin" /> Loading account…</div>
-
-  if (!me) {
-    return (
-      <main className="login-shell">
-        <section className="login-card">
-          <div className="brand-mark">N</div>
-          <span className="eyebrow">NORTHSTAR CLOUD</span>
-          <h1>Operational account console</h1>
-          <p>Sign in to inspect account activity, detected problems and operational reports.</p>
-          <form onSubmit={onLogin}>
-            <label>Email<input name="email" type="email" defaultValue="demo@northstar.local" required /></label>
-            <label>Password<input name="password" type="password" defaultValue="demo123" required /></label>
-            {loginError && <div className="form-error">{loginError}</div>}
-            <button type="submit" className="primary-button">Sign in</button>
-          </form>
-        </section>
-      </main>
-    )
-  }
-
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><div className="brand-mark small">N</div><div><strong>Northstar</strong><span>Cloud</span></div></div>
-        <nav>
-          {nav.map((item) => (
-            <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}>
-              <item.icon size={17} /> {item.label}
-              {item.id === 'problems' && problems.filter((p) => p.status !== 'resolved').length > 0 && (
-                <span className="nav-count">{problems.filter((p) => p.status !== 'resolved').length}</span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <div className="user-block"><span className="avatar">ML</span><div><strong>{me.name}</strong><span>{me.email}</span></div></div>
-          <button className="logout-button" onClick={() => void logout()}><LogOut size={16} /> Sign out</button>
-        </div>
-      </aside>
-
-      <main className="workspace">
-        <section className="content-column">
-          {page === 'overview' && <OverviewPage me={me} problems={problems} />}
-          {page === 'logs' && <LogsPage logs={logs} />}
-          {page === 'problems' && <ProblemsPage problems={problems} />}
-          {page === 'reports' && <ReportsPage reports={reports} />}
-        </section>
-        <AssistantPanel onActivity={() => void loadData()} />
-      </main>
-    </div>
-  )
-}
+export default function App(){const[mode,setMode]=useState<Mode>('store');const[admin,setAdmin]=useState<AdminMe|null>(null);const[checking,setChecking]=useState(true);useEffect(()=>{api.adminMe().then(setAdmin).catch(()=>setAdmin(null)).finally(()=>setChecking(false))},[]);async function logout(){await api.logout();setAdmin(null)}if(mode==='store')return <Storefront onAdmin={()=>setMode('admin')}/>;if(checking)return <div className="empty-state fullscreen">Carregando…</div>;if(!admin)return <AdminLogin onReady={setAdmin} onBack={()=>setMode('store')}/>;return <AdminConsole me={admin} onBack={()=>setMode('store')} onLogout={()=>void logout()}/>} 

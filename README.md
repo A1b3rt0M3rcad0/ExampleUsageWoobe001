@@ -1,172 +1,130 @@
-# ExampleUsageWoobe001
+# ExampleUsageWoobe001 — Mercury Commerce
 
-A proof-of-value SaaS application showing an AI account assistant embedded into a real product surface.
+Aplicação de referência para demonstrar a Woobe integrada a um produto que faz sentido mesmo sem IA.
 
-The end-user application is branded **Northstar Cloud**. It deliberately does not present the AI control plane to the user. The user sees an account console with operational data and an assistant capable of investigating that data and producing reports.
+O produto fictício agora é a **Mercury Store**, um e-commerce completo o suficiente para ter duas superfícies de IA distintas:
 
-## What the demo proves
+- **Shopping Assistant** para o cliente encontrar produtos usando linguagem natural.
+- **Merchant Assistant** para o lojista analisar vendas, estoque, clientes, entregas e gerar relatórios.
 
-- ChatSurface embedded into a normal SaaS account experience.
-- A Woobe Session bound server-side to the authenticated application user.
-- Short-lived browser access; the ChatSurface Access Key never reaches the frontend.
-- Account data, logs and detected problems exposed as narrow HTTP Tools.
-- Agent/Network reasoning over current operational evidence.
-- AI-generated reports persisted back into the SaaS through a Tool call.
-- Existing ChatSurface history/streaming behavior instead of a custom chat implementation.
+Todo o domínio comercial é **100% mockado**. A aplicação não espera Shopify, ERP, transportadora, CRM ou qualquer outra fonte externa.
 
-The integration follows the `feature/chatsurface-mvp` behavior currently implemented in ProjectRAI: server-side Session creation, Session Access Token issuance, `WoobeChat.mount(...)`, immutable Session release binding and token refresh without rebuilding the conversation.
+## O que o exemplo demonstra
 
-## Quick start with Docker
+### Lado do cliente
 
-The application is designed to boot with Docker Compose only.
+O catálogo contém dezenas de produtos com atributos estruturados, preço, estoque, categoria, localização física e URL canônica.
+
+Perguntas esperadas:
+
+- `Vocês têm uma TV de tela plana de 27 polegadas?`
+- `Quero uma TV 4K de pelo menos 43 polegadas.`
+- `Tem headset bluetooth por até R$ 500?`
+- `Quero um teclado mecânico ABNT2.`
+- `Onde fica o Sony WH-1000XM6 na loja?`
+- `Me manda o link desse produto.`
+
+O LLM interpreta a necessidade; a Tool consulta os fatos. O link retornado é o `product_url` da API da loja, não uma URL inventada pelo modelo.
+
+### Lado do lojista
+
+O Merchant Console usa 120 dias de pedidos sintéticos para oferecer dashboard, pedidos, estoque, clientes, entregas e relatórios.
+
+Perguntas esperadas:
+
+- `Quais foram os produtos que mais venderam nos últimos 15 dias?`
+- `Quais categorias mais faturaram?`
+- `Quais produtos tiveram pior performance?`
+- `O que pode ficar sem estoque nos próximos 30 dias?`
+- `Quais produtos estão ganhando tração?`
+- `Quais produtos estão parados e podem entrar em promoção?`
+- `Qual cliente VIP está com entrega atrasada?`
+- `Gere um relatório dos últimos 15 dias com melhores, piores e previsão de 30 dias.`
+
+A previsão é simples e determinística: usa velocidade dos últimos 30 dias, período anterior e semana recente. Ela existe para a PoV e não é apresentada como previsão comercial de produção.
+
+## Arquitetura
+
+```text
+                         MERCURY STORE
+                     aplicação cliente fictícia
+
+        Customer                             Merchant
+           │                                    │
+           ▼                                    ▼
+  Shopping Assistant                    Merchant Assistant
+           │                                    │
+      ChatSurface                          ChatSurface
+           │                                    │
+           ▼                                    ▼
+     Agent Release                     Agent/Network Release
+           │                                    │
+    public catalog Tools                 private merchant Tools
+           │                                    │
+           └───────────────┬────────────────────┘
+                           ▼
+                    Mercury Mock API
+                           │
+             ┌─────────────┴─────────────┐
+             │                           │
+        Catalog data              120d sales history
+                                  orders / customers
+                                  inventory / shipments
+```
+
+## Docker quick start
 
 ```bash
 cp .env.example .env
 docker compose up --build -d
 ```
 
-Then open:
+Abra:
 
 ```text
 http://localhost:5174
 ```
 
-Demo credentials:
+Merchant Console:
 
 ```text
-Email:    demo@northstar.local
-Password: demo123
+Email: admin@mercury.demo
+Senha: demo123
 ```
 
-Check container health with:
+A aplicação e todos os mocks sobem sem credenciais Woobe. Os painéis de ChatSurface exibem uma mensagem de configuração até você preencher as credenciais reais.
 
-```bash
-docker compose ps
-```
+## Configuração Woobe
 
-Expected services:
-
-```text
-api   healthy   http://localhost:8001/health
-web   healthy   http://localhost:5174
-```
-
-Stop the stack with:
-
-```bash
-docker compose down
-```
-
-Reset the demo database as well:
-
-```bash
-docker compose down -v
-```
-
-### Woobe credentials
-
-Copying `.env.example` unchanged is enough to build and start the Northstar application. The embedded assistant requires an actual ChatSurface, so replace these values when you want the end-to-end Woobe integration to work:
+Preencha no `.env`:
 
 ```dotenv
-WOOBE_CHAT_SURFACE_PUBLIC_ID=csf_...
-WOOBE_CHAT_SURFACE_ACCESS_KEY=woobe_surface_...
-WOOBE_TOOL_API_KEY=<same private key configured in the Woobe HTTP Tools>
+WOOBE_STORE_CHAT_SURFACE_PUBLIC_ID=csf_...
+WOOBE_STORE_CHAT_SURFACE_ACCESS_KEY=woobe_surface_...
+WOOBE_ADMIN_CHAT_SURFACE_PUBLIC_ID=csf_...
+WOOBE_ADMIN_CHAT_SURFACE_ACCESS_KEY=woobe_surface_...
+WOOBE_STORE_TOOL_API_KEY=...
+WOOBE_ADMIN_TOOL_API_KEY=...
 ```
 
-The default local topology expects ProjectRAI/ChatSurface to be running on the host:
+Veja [`docs/WOOBE_SETUP.md`](docs/WOOBE_SETUP.md).
 
-```text
-Woobe API:     http://localhost:8000
-Woobe embed:   http://localhost:8081/chat/v1/embed.js
-Northstar API: http://localhost:8001
-Northstar Web: http://localhost:5174
-```
+## Segurança da PoV
 
-Inside the backend container, `WOOBE_API_BASE_URL` defaults to `http://host.docker.internal:8000`, including Linux support through the Compose `host-gateway` mapping.
+As Tools do Shopping Assistant são separadas das Tools administrativas.
 
-## Demo flow
+O Shopping Assistant acessa apenas catálogo público. Ele não recebe Tools de pedidos, clientes, forecast ou relatórios.
 
-1. Sign in with the seeded demo account.
-2. Review account usage, current service health, logs and detected problems.
-3. Ask the embedded assistant questions such as:
-   - `Why are authentication requests failing?`
-   - `Is the webhook problem still happening?`
-   - `What are the most important errors in the recent logs?`
-   - `Generate an executive operational report with findings and recommendations.`
-4. The configured Woobe Agent/Network reads the application's Tool API.
-5. When a report is created, the Reports area updates after the ChatSurface Run completes.
+O Merchant Assistant usa outra chave de Tool e outra ChatSurface. A separação de privilégio não depende apenas de prompt.
 
-## Architecture
-
-```text
-Browser
-├── Northstar Cloud UI
-│   ├── Overview
-│   ├── Logs
-│   ├── Problems
-│   └── Reports
-│
-└── Woobe ChatSurface iframe
-      │ short-lived Session Access Token
-      ▼
-Woobe ChatSurface / Runtime
-      │
-      └── Agent or Network Release
-            ├── GET account context
-            ├── GET logs
-            ├── GET problems
-            └── POST operational report
-                    │
-                    ▼
-           ExampleUsageWoobe001 API
-```
-
-The permanent ChatSurface Access Key exists only in `backend` and is used for Session creation/token issuance.
+A PoV continua deliberadamente single-merchant. O ChatSurface MVP atual não deve ser tratado como delegated Tool identity multi-tenant.
 
 ## Stack
 
-- Backend: FastAPI + SQLite + httpx
-- Frontend: React + TypeScript + Vite
-- Chat UI: Woobe ChatSurface loader/iframe
-- Runtime packaging: Docker Compose
-
-## Docker behavior
-
-`docker-compose.yml` builds both services, waits for the backend healthcheck before starting the web service, persists SQLite in a named volume, and configures both services with `restart: unless-stopped`.
-
-Default host ports can be changed in `.env`:
-
-```dotenv
-APP_API_PORT=8001
-APP_WEB_PORT=5174
-```
-
-If those ports are changed, also update the browser-visible URLs and `FRONTEND_ORIGIN` in `.env` so CORS and ChatSurface origin validation continue to match.
-
-## Configure Tools in Woobe
-
-See [`docs/WOOBE_SETUP.md`](docs/WOOBE_SETUP.md).
-
-Important: Woobe HTTP Tools currently reject localhost/private-IP targets. The backend Tool API must be available on a public HTTPS endpoint for the Agent/Network to call it end to end.
-
-## Security model
-
-The repository intentionally preserves the current ChatSurface security split:
-
-```text
-Browser
-  -> Surface Public ID
-  -> Session Access Token (short-lived)
-
-Application backend
-  -> ChatSurface Access Key (persistent secret)
-
-Woobe Tool runtime
-  -> Tool API key (persistent server-to-server secret)
-```
-
-The demo is account-scoped to one seeded tenant because delegated per-user Tool identity is not part of the current ChatSurface MVP. Do not treat the demo Tool API as a general multi-tenant authorization template. The exact constraint and the safe production direction are documented in `docs/WOOBE_SETUP.md`.
-
-## Repository intent
-
-This is not a second AI platform and not a showcase of control-plane UI. It is an external SaaS whose AI feature is operated through Woobe. The value should be visible from the finished user experience first; Woobe can be revealed afterward as the infrastructure that configured, versioned, published and observed the AI product.
+- FastAPI
+- SQLite apenas para Sessions ChatSurface e relatórios gerados
+- dataset comercial sintético em memória
+- React + TypeScript + Vite
+- Nginx
+- Docker Compose
+- Woobe ChatSurface

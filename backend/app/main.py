@@ -1,405 +1,135 @@
 from __future__ import annotations
-
-import json
-from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
-
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
-
-from .config import Settings, get_settings
+from .config import get_settings
+from .data import MockCommerceData
 from .db import Database
-from .security import SESSION_KEY, authenticate_demo_user, require_tool_key, require_user
-from .woobe import WoobeChatSurfaceClient, WoobeIntegrationError, new_local_binding_id
+from .security import ADMIN_SESSION_KEY, authenticate_admin, require_admin, require_bearer
+from .woobe import WoobeChatSurfaceClient, WoobeIntegrationError
 
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
+class LoginRequest(BaseModel): email:str; password:str
+class StoreChatRequest(BaseModel): client_id:str=Field(min_length=8,max_length=120)
 class ReportCreateRequest(BaseModel):
-    title: str = Field(min_length=3, max_length=160)
-    period_label: str = Field(min_length=1, max_length=80)
-    executive_summary: str = Field(min_length=10, max_length=4000)
-    findings: list[str] = Field(min_length=1, max_length=20)
-    recommendations: list[str] = Field(default_factory=list, max_length=20)
+    title:str=Field(min_length=3,max_length=160); period_label:str=Field(min_length=1,max_length=80); executive_summary:str=Field(min_length=10,max_length=5000); findings:list[str]=Field(min_length=1,max_length=30); recommendations:list[str]=Field(default_factory=list,max_length=30)
 
+settings=get_settings(); db=Database(settings); db.initialize(); mock=MockCommerceData(settings.public_store_base_url); woobe=WoobeChatSurfaceClient(settings)
+app=FastAPI(title='Mercury Commerce Example API',version='1.0.0')
+app.add_middleware(SessionMiddleware,secret_key=settings.app_secret_key,session_cookie='mercury_admin_session',same_site='lax',https_only=settings.app_environment.lower()=='production')
+app.add_middleware(CORSMiddleware,allow_origins=[settings.frontend_origin],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
 
-settings = get_settings()
-db = Database(settings)
-db.initialize()
+@app.get('/health')
+def health(): return {'status':'ok'}
 
-app = FastAPI(title="ExampleUsageWoobe001 API", version="0.1.0")
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.app_secret_key,
-    session_cookie="example_usage_session",
-    same_site="lax",
-    https_only=settings.app_environment.lower() == "production",
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.get('/api/store/categories')
+def store_categories(): return {'categories':mock.categories}
 
+@app.get('/api/store/products')
+def store_products(query:str|None=None,category:str|None=None,brand:str|None=None,min_price:float|None=Query(default=None,ge=0),max_price:float|None=Query(default=None,ge=0),in_stock:bool|None=None,screen_size_inches:float|None=Query(default=None,ge=1,le=120),resolution:str|None=None,smart_tv:bool|None=None,limit:int=Query(default=24,ge=1,le=100)):
+    return mock.search_products(query,category,brand,min_price,max_price,in_stock,screen_size_inches,resolution,smart_tv,limit)
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+@app.get('/api/store/products/{slug}')
+def store_product(slug:str):
+    p=mock.product_by_slug(slug)
+    if not p: raise HTTPException(404,'Product not found')
+    return {'product':p}
 
+@app.post('/api/auth/login')
+def login(payload:LoginRequest,request:Request):
+    if not authenticate_admin(payload.email,payload.password,settings): raise HTTPException(status.HTTP_401_UNAUTHORIZED,'Invalid credentials')
+    request.session[ADMIN_SESSION_KEY]={'user_id':settings.admin_user_id,'merchant_id':settings.merchant_id,'email':settings.admin_email,'name':'Alex Morgan'}; return {'success':True}
 
-def parse_json(value: str) -> Any:
-    return json.loads(value) if value else None
+@app.post('/api/auth/logout')
+def logout(request:Request): request.session.clear(); return {'success':True}
 
+@app.get('/api/admin/me')
+def admin_me(request:Request): return {**require_admin(request,settings),'merchant_name':'Mercury Store'}
+@app.get('/api/admin/dashboard')
+def dashboard(request:Request): require_admin(request,settings); return mock.dashboard()
+@app.get('/api/admin/orders')
+def orders(request:Request,status_filter:str|None=Query(default=None,alias='status'),limit:int=Query(default=100,ge=1,le=500)): require_admin(request,settings); rows=mock.recent_orders(limit,status_filter); return {'count':len(rows),'orders':rows}
+@app.get('/api/admin/inventory')
+def inventory(request:Request): require_admin(request,settings); rows=mock.inventory(); return {'count':len(rows),'inventory':rows}
+@app.get('/api/admin/customers')
+def customers(request:Request,limit:int=Query(default=100,ge=1,le=500)):
+    require_admin(request,settings); rows=[]
+    for c in mock.customers[:limit]:
+        x=mock.customer(c['id']); rows.append({k:x[k] for k in ['id','name','email','segment','city','orders_count','lifetime_value']})
+    rows.sort(key=lambda r:r['lifetime_value'],reverse=True); return {'count':len(rows),'customers':rows}
+@app.get('/api/admin/shipments')
+def shipments(request:Request,status_filter:str|None=Query(default=None,alias='status'),limit:int=Query(default=100,ge=1,le=500)): require_admin(request,settings); rows=mock.shipments_status(limit,status_filter); return {'count':len(rows),'shipments':rows}
+@app.get('/api/admin/analytics')
+def analytics(request:Request,days:int=Query(default=15,ge=1,le=120)): require_admin(request,settings); return mock.sales_analytics(days)
+@app.get('/api/admin/forecast')
+def forecast(request:Request,days:int=Query(default=30,ge=7,le=60)): require_admin(request,settings); return mock.forecast(days)
+@app.get('/api/admin/reports')
+def reports(request:Request): require_admin(request,settings); rows=db.list_reports(settings.merchant_id); return {'count':len(rows),'reports':rows}
 
-def account_payload() -> dict[str, Any]:
-    return {
-        "id": settings.demo_account_id,
-        "name": "Northstar Labs",
-        "plan": "Starter",
-        "monthly_api_calls": 8120,
-        "monthly_api_limit": 10000,
-        "usage_percent": 81.2,
-        "renewal_in_days": 3,
-        "status": "active",
-        "services": [
-            {"name": "API Gateway", "status": "healthy"},
-            {"name": "Authentication", "status": "degraded"},
-            {"name": "Webhooks", "status": "degraded"},
-            {"name": "Billing", "status": "healthy"},
-        ],
-        "api_credentials": [
-            {"id": "key_prod_05", "name": "Production", "status": "active", "created_at": "2026-08-10T14:10:00Z"},
-            {"id": "key_prod_04", "name": "Legacy production", "status": "revoked", "revoked_at": "2026-08-10T15:41:00Z"},
-        ],
-    }
+async def ensure_binding(subject_key,surface_kind,public_id,access_key,metadata):
+    existing=db.get_chat_binding(subject_key,surface_kind,public_id)
+    if existing:return {'binding_id':existing['id'],'session_id':existing['woobe_session_id'],'target_release_id':existing['target_release_id'],'surface_id':public_id}
+    try: remote=await woobe.create_session(public_id=public_id,access_key=access_key,external_reference=f'{surface_kind}:{subject_key}',metadata=metadata)
+    except WoobeIntegrationError as exc: raise HTTPException(502,str(exc)) from exc
+    bid=db.save_chat_binding(subject_key=subject_key,surface_kind=surface_kind,surface_public_id=public_id,woobe_session_id=remote.session_id,target_release_id=remote.target_release_id)
+    return {'binding_id':bid,'session_id':remote.session_id,'target_release_id':remote.target_release_id,'surface_id':public_id}
 
+@app.post('/api/chat/store/session')
+async def store_session(payload:StoreChatRequest):
+    if not settings.store_surface_configured: raise HTTPException(503,'Shopping Assistant ChatSurface is not configured')
+    return await ensure_binding(payload.client_id,'store',settings.woobe_store_chat_surface_public_id,settings.woobe_store_chat_surface_access_key,{'application':'Mercury Store','surface_role':'shopping-assistant','client_id':payload.client_id})
+@app.post('/api/chat/store/token')
+async def store_token(payload:StoreChatRequest):
+    if not settings.store_surface_configured: raise HTTPException(503,'Shopping Assistant ChatSurface is not configured')
+    b=db.get_chat_binding(payload.client_id,'store',settings.woobe_store_chat_surface_public_id)
+    if not b: raise HTTPException(404,'Shopping Assistant session not initialized')
+    try:t=await woobe.issue_token(public_id=settings.woobe_store_chat_surface_public_id,access_key=settings.woobe_store_chat_surface_access_key,session_id=b['woobe_session_id'])
+    except WoobeIntegrationError as exc: raise HTTPException(502,str(exc)) from exc
+    return {'surface_id':settings.woobe_store_chat_surface_public_id,'session_id':b['woobe_session_id'],**t}
+@app.post('/api/chat/admin/session')
+async def admin_session(request:Request):
+    p=require_admin(request,settings)
+    if not settings.admin_surface_configured: raise HTTPException(503,'Merchant Assistant ChatSurface is not configured')
+    return await ensure_binding(p['user_id'],'admin',settings.woobe_admin_chat_surface_public_id,settings.woobe_admin_chat_surface_access_key,{'application':'Mercury Merchant Console','surface_role':'merchant-operations-assistant','merchant_id':settings.merchant_id,'user_id':p['user_id']})
+@app.post('/api/chat/admin/token')
+async def admin_token(request:Request):
+    p=require_admin(request,settings)
+    if not settings.admin_surface_configured: raise HTTPException(503,'Merchant Assistant ChatSurface is not configured')
+    b=db.get_chat_binding(p['user_id'],'admin',settings.woobe_admin_chat_surface_public_id)
+    if not b: raise HTTPException(404,'Merchant Assistant session not initialized')
+    try:t=await woobe.issue_token(public_id=settings.woobe_admin_chat_surface_public_id,access_key=settings.woobe_admin_chat_surface_access_key,session_id=b['woobe_session_id'])
+    except WoobeIntegrationError as exc: raise HTTPException(502,str(exc)) from exc
+    return {'surface_id':settings.woobe_admin_chat_surface_public_id,'session_id':b['woobe_session_id'],**t}
 
-def tool_guard(authorization: str | None = None) -> None:
-    require_tool_key(settings, authorization)
+def store_guard(auth): require_bearer(settings.woobe_store_tool_api_key,auth)
+def admin_guard(auth): require_bearer(settings.woobe_admin_tool_api_key,auth)
 
+@app.get('/api/woobe-tools/store/search-products')
+def tool_search(authorization:str|None=Header(default=None,alias='Authorization'),query:str|None=None,category:str|None=None,brand:str|None=None,min_price:float|None=Query(default=None,ge=0),max_price:float|None=Query(default=None,ge=0),in_stock:bool|None=True,screen_size_inches:float|None=Query(default=None,ge=1,le=120),resolution:str|None=None,smart_tv:bool|None=None,limit:int=Query(default=10,ge=1,le=30)):
+    store_guard(authorization); return mock.search_products(query,category,brand,min_price,max_price,in_stock,screen_size_inches,resolution,smart_tv,limit)
+@app.get('/api/woobe-tools/store/product')
+def tool_product(authorization:str|None=Header(default=None,alias='Authorization'),slug:str=Query(...)):
+    store_guard(authorization); p=mock.product_by_slug(slug)
+    if not p:raise HTTPException(404,'Product not found')
+    return {'product':p}
+@app.get('/api/woobe-tools/store/categories')
+def tool_categories(authorization:str|None=Header(default=None,alias='Authorization')): store_guard(authorization); return {'categories':mock.categories}
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post("/api/auth/login")
-def login(payload: LoginRequest, request: Request) -> dict[str, Any]:
-    if not authenticate_demo_user(payload.email, payload.password, settings):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    request.session[SESSION_KEY] = {
-        "user_id": settings.demo_user_id,
-        "account_id": settings.demo_account_id,
-        "email": settings.demo_email,
-        "name": "Morgan Lee",
-    }
-    return {"success": True}
-
-
-@app.post("/api/auth/logout")
-def logout(request: Request) -> dict[str, bool]:
-    request.session.clear()
-    return {"success": True}
-
-
-@app.get("/api/me")
-def me(request: Request) -> dict[str, Any]:
-    principal = require_user(request, settings)
-    return {
-        **principal,
-        "account": account_payload(),
-    }
-
-
-@app.get("/api/account")
-def get_account(request: Request) -> dict[str, Any]:
-    require_user(request, settings)
-    return account_payload()
-
-
-@app.get("/api/logs")
-def get_logs(
-    request: Request,
-    severity: str | None = Query(default=None),
-    service: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-) -> list[dict[str, Any]]:
-    require_user(request, settings)
-    query = "SELECT * FROM logs WHERE account_id = ?"
-    params: list[Any] = [settings.demo_account_id]
-    if severity:
-        query += " AND severity = ?"
-        params.append(severity.upper())
-    if service:
-        query += " AND service = ?"
-        params.append(service)
-    query += " ORDER BY occurred_at DESC LIMIT ?"
-    params.append(limit)
-    with db.connect() as connection:
-        rows = connection.execute(query, params).fetchall()
-    return [
-        {
-            **dict(row),
-            "metadata": parse_json(row["metadata_json"]),
-        }
-        for row in rows
-    ]
-
-
-@app.get("/api/problems")
-def get_problems(
-    request: Request,
-    status_filter: str | None = Query(default=None, alias="status"),
-) -> list[dict[str, Any]]:
-    require_user(request, settings)
-    query = "SELECT * FROM problems WHERE account_id = ?"
-    params: list[Any] = [settings.demo_account_id]
-    if status_filter:
-        query += " AND status = ?"
-        params.append(status_filter)
-    query += " ORDER BY CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, last_seen_at DESC"
-    with db.connect() as connection:
-        rows = connection.execute(query, params).fetchall()
-    return [
-        {
-            **dict(row),
-            "evidence": parse_json(row["evidence_json"]),
-        }
-        for row in rows
-    ]
-
-
-@app.get("/api/reports")
-def get_reports(request: Request) -> list[dict[str, Any]]:
-    require_user(request, settings)
-    with db.connect() as connection:
-        rows = connection.execute(
-            "SELECT * FROM reports WHERE account_id = ? ORDER BY created_at DESC",
-            (settings.demo_account_id,),
-        ).fetchall()
-    return [
-        {
-            **dict(row),
-            "findings": parse_json(row["findings_json"]),
-            "recommendations": parse_json(row["recommendations_json"]),
-        }
-        for row in rows
-    ]
-
-
-@app.post("/api/chat/session")
-async def create_or_get_chat_session(request: Request) -> dict[str, Any]:
-    principal = require_user(request, settings)
-    with db.connect() as connection:
-        existing = connection.execute(
-            """
-            SELECT * FROM chat_sessions
-            WHERE user_id = ? AND account_id = ? AND surface_public_id = ?
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (principal["user_id"], principal["account_id"], settings.woobe_chat_surface_public_id),
-        ).fetchone()
-        if existing:
-            connection.execute(
-                "UPDATE chat_sessions SET last_accessed_at = ? WHERE id = ?",
-                (now_iso(), existing["id"]),
-            )
-            return {
-                "binding_id": existing["id"],
-                "session_id": existing["woobe_session_id"],
-                "target_release_id": existing["target_release_id"],
-                "surface_id": settings.woobe_chat_surface_public_id,
-            }
-
-    client = WoobeChatSurfaceClient(settings)
-    try:
-        remote = await client.create_session(
-            external_reference=f"{principal['account_id']}:{principal['user_id']}",
-            account_id=principal["account_id"],
-            user_id=principal["user_id"],
-        )
-    except WoobeIntegrationError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    binding_id = new_local_binding_id()
-    with db.connect() as connection:
-        connection.execute(
-            """
-            INSERT INTO chat_sessions(id, user_id, account_id, surface_public_id, woobe_session_id, target_release_id, created_at, last_accessed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                binding_id,
-                principal["user_id"],
-                principal["account_id"],
-                settings.woobe_chat_surface_public_id,
-                remote.session_id,
-                remote.target_release_id,
-                now_iso(),
-                now_iso(),
-            ),
-        )
-    return {
-        "binding_id": binding_id,
-        "session_id": remote.session_id,
-        "target_release_id": remote.target_release_id,
-        "surface_id": settings.woobe_chat_surface_public_id,
-    }
-
-
-@app.post("/api/chat/session/token")
-async def issue_chat_token(request: Request) -> dict[str, Any]:
-    principal = require_user(request, settings)
-    with db.connect() as connection:
-        binding = connection.execute(
-            """
-            SELECT * FROM chat_sessions
-            WHERE user_id = ? AND account_id = ? AND surface_public_id = ?
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (principal["user_id"], principal["account_id"], settings.woobe_chat_surface_public_id),
-        ).fetchone()
-    if not binding:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not initialized")
-    client = WoobeChatSurfaceClient(settings)
-    try:
-        token = await client.issue_token(binding["woobe_session_id"])
-    except WoobeIntegrationError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    return {
-        "surface_id": settings.woobe_chat_surface_public_id,
-        "session_id": binding["woobe_session_id"],
-        "target_release_id": binding["target_release_id"],
-        **token,
-    }
-
-
-# Woobe HTTP Tool API. These endpoints are intentionally account-scoped to the single demo tenant.
-# The current ChatSurface MVP does not provide delegated per-user Tool identity, so this API must not
-# be presented as a production multi-tenant authorization model.
-
-@app.get("/api/woobe-tools/account")
-def tool_account(authorization: str | None = Header(default=None, alias="Authorization")) -> dict[str, Any]:
-    tool_guard(authorization)
-    return {"account": account_payload()}
-
-
-@app.get("/api/woobe-tools/logs")
-def tool_logs(
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    severity: str | None = Query(default=None),
-    service: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-) -> dict[str, Any]:
-    tool_guard(authorization)
-    query = "SELECT * FROM logs WHERE account_id = ?"
-    params: list[Any] = [settings.demo_account_id]
-    if severity:
-        query += " AND severity = ?"
-        params.append(severity.upper())
-    if service:
-        query += " AND service = ?"
-        params.append(service)
-    query += " ORDER BY occurred_at DESC LIMIT ?"
-    params.append(limit)
-    with db.connect() as connection:
-        rows = connection.execute(query, params).fetchall()
-    return {
-        "account_id": settings.demo_account_id,
-        "count": len(rows),
-        "logs": [
-            {
-                "id": row["id"],
-                "occurred_at": row["occurred_at"],
-                "severity": row["severity"],
-                "service": row["service"],
-                "event": row["event"],
-                "message": row["message"],
-                "request_id": row["request_id"],
-                "metadata": parse_json(row["metadata_json"]),
-            }
-            for row in rows
-        ],
-    }
-
-
-@app.get("/api/woobe-tools/problems")
-def tool_problems(
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    status_filter: str | None = Query(default=None, alias="status"),
-) -> dict[str, Any]:
-    tool_guard(authorization)
-    query = "SELECT * FROM problems WHERE account_id = ?"
-    params: list[Any] = [settings.demo_account_id]
-    if status_filter:
-        query += " AND status = ?"
-        params.append(status_filter)
-    query += " ORDER BY CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, last_seen_at DESC"
-    with db.connect() as connection:
-        rows = connection.execute(query, params).fetchall()
-    return {
-        "account_id": settings.demo_account_id,
-        "count": len(rows),
-        "problems": [
-            {
-                "id": row["id"],
-                "status": row["status"],
-                "severity": row["severity"],
-                "title": row["title"],
-                "service": row["service"],
-                "detected_at": row["detected_at"],
-                "last_seen_at": row["last_seen_at"],
-                "occurrences": row["occurrences"],
-                "summary": row["summary"],
-                "evidence": parse_json(row["evidence_json"]),
-            }
-            for row in rows
-        ],
-    }
-
-
-@app.post("/api/woobe-tools/reports", status_code=201)
-def tool_create_report(
-    payload: ReportCreateRequest,
-    authorization: str | None = Header(default=None, alias="Authorization"),
-) -> dict[str, Any]:
-    tool_guard(authorization)
-    report_id = f"rpt_{uuid4().hex[:12]}"
-    created_at = now_iso()
-    with db.connect() as connection:
-        connection.execute(
-            """
-            INSERT INTO reports(id, account_id, title, period_label, executive_summary, findings_json, recommendations_json, generated_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                report_id,
-                settings.demo_account_id,
-                payload.title,
-                payload.period_label,
-                payload.executive_summary,
-                json.dumps(payload.findings),
-                json.dumps(payload.recommendations),
-                "woobe-assistant",
-                created_at,
-            ),
-        )
-    return {
-        "report": {
-            "id": report_id,
-            "title": payload.title,
-            "period_label": payload.period_label,
-            "executive_summary": payload.executive_summary,
-            "findings": payload.findings,
-            "recommendations": payload.recommendations,
-            "generated_by": "woobe-assistant",
-            "created_at": created_at,
-        }
-    }
+@app.get('/api/woobe-tools/admin/sales-analytics')
+def tool_analytics(authorization:str|None=Header(default=None,alias='Authorization'),days:int=Query(default=15,ge=1,le=120)): admin_guard(authorization); return mock.sales_analytics(days)
+@app.get('/api/woobe-tools/admin/forecast')
+def tool_forecast(authorization:str|None=Header(default=None,alias='Authorization'),days:int=Query(default=30,ge=7,le=60)): admin_guard(authorization); return mock.forecast(days)
+@app.get('/api/woobe-tools/admin/inventory')
+def tool_inventory(authorization:str|None=Header(default=None,alias='Authorization')): admin_guard(authorization); rows=mock.inventory(); return {'count':len(rows),'inventory':rows}
+@app.get('/api/woobe-tools/admin/orders')
+def tool_orders(authorization:str|None=Header(default=None,alias='Authorization'),status_filter:str|None=Query(default=None,alias='status'),limit:int=Query(default=50,ge=1,le=200)): admin_guard(authorization); rows=mock.recent_orders(limit,status_filter); return {'count':len(rows),'orders':rows}
+@app.get('/api/woobe-tools/admin/customer')
+def tool_customer(authorization:str|None=Header(default=None,alias='Authorization'),customer_id:str=Query(...)):
+    admin_guard(authorization); c=mock.customer(customer_id)
+    if not c:raise HTTPException(404,'Customer not found')
+    return {'customer':c}
+@app.get('/api/woobe-tools/admin/shipments')
+def tool_shipments(authorization:str|None=Header(default=None,alias='Authorization'),status_filter:str|None=Query(default=None,alias='status'),limit:int=Query(default=100,ge=1,le=200)): admin_guard(authorization); rows=mock.shipments_status(limit,status_filter); return {'count':len(rows),'shipments':rows}
+@app.post('/api/woobe-tools/admin/reports',status_code=201)
+def tool_report(payload:ReportCreateRequest,authorization:str|None=Header(default=None,alias='Authorization')): admin_guard(authorization); return {'report':db.create_report(merchant_id=settings.merchant_id,title=payload.title,period_label=payload.period_label,executive_summary=payload.executive_summary,findings=payload.findings,recommendations=payload.recommendations)}

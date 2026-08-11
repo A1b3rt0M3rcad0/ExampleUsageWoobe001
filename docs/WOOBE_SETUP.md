@@ -1,155 +1,130 @@
-# Woobe setup for ExampleUsageWoobe001
+# Woobe setup — Mercury Commerce Example
 
-This demo targets the current `feature/chatsurface-mvp` contract in ProjectRAI.
+Este exemplo usa duas ChatSurfaces porque são dois produtos de IA diferentes.
 
-## 1. ChatSurface contract used by the app
+## 1. Shopping Assistant
 
-The backend uses exactly these server-to-server operations:
+Target recomendado: **Agent Release**.
 
-```http
-POST /v1/chat-surfaces/{public_id}/sessions
-Authorization: Bearer woobe_surface_...
-Idempotency-Key: <stable local conversation id>
+Responsabilidade: ajudar o cliente a descobrir produtos públicos. Não recebe acesso às APIs administrativas.
 
-{
-  "external_reference": "<account>:<user>",
-  "metadata": {
-    "application": "ExampleUsageWoobe001",
-    "account_reference": "...",
-    "user_reference": "..."
-  }
-}
-```
-
-and:
+Todas as Tools usam:
 
 ```http
-POST /v1/chat-surfaces/{public_id}/sessions/{session_id}/tokens
-Authorization: Bearer woobe_surface_...
-
-{
-  "origin": "https://your-app.example"
-}
+Authorization: Bearer <WOOBE_STORE_TOOL_API_KEY>
 ```
 
-The browser receives only the short-lived Session Access Token. The permanent ChatSurface Access Key stays in this backend.
-
-The frontend mounts the current embed loader:
-
-```js
-WoobeChat.mount({
-  container,
-  surfaceId,
-  sessionToken,
-  iframeBaseUrl,
-  apiBaseUrl,
-  mode: "inline"
-})
-```
-
-## 2. Surface configuration
-
-Create a ChatSurface for the Production Agent Release or Network Release used by the demo.
-
-Recommended appearance:
-
-```json
-{
-  "theme": "light",
-  "primary_color": "#4F46E5",
-  "title": "Account Assistant",
-  "placeholder": "Ask about logs, problems or reports…",
-  "welcome_message": "I can investigate your account activity, correlate problems and create operational reports."
-}
-```
-
-For local browser testing, add exactly:
+### `search_products`
 
 ```text
-http://localhost:5174
+GET /api/woobe-tools/store/search-products
 ```
 
-to the Surface allowed origins.
-
-Create a ChatSurface Access Key and place it only in the example backend environment.
-
-## 3. HTTP Tools for the Agent/Network
-
-The application exposes a deliberately narrow Tool API. Configure these as Woobe HTTP Tools.
-
-Every route must receive this secret header:
-
-```http
-Authorization: Bearer <WOOBE_TOOL_API_KEY>
-```
-
-Store the credential as a Woobe secret; do not hard-code it in prompt text.
-
-### Account context
-
-```text
-Name: get_account_context
-Method: GET
-URL: https://<public-demo-api>/api/woobe-tools/account
-Risk: low
-```
-
-Purpose: retrieve plan, usage, service health and API credential state.
-
-### Logs
-
-```text
-Name: read_account_logs
-Method: GET
-URL: https://<public-demo-api>/api/woobe-tools/logs
-Risk: low
-```
-
-Optional query inputs:
+Inputs recomendados:
 
 ```json
 {
   "type": "object",
   "properties": {
-    "severity": {"type": "string", "enum": ["INFO", "WARN", "ERROR"]},
-    "service": {"type": "string"},
-    "limit": {"type": "integer", "minimum": 1, "maximum": 200}
+    "query": {"type": "string"},
+    "category": {"type": "string"},
+    "brand": {"type": "string"},
+    "min_price": {"type": "number"},
+    "max_price": {"type": "number"},
+    "in_stock": {"type": "boolean"},
+    "screen_size_inches": {"type": "number"},
+    "resolution": {"type": "string"},
+    "smart_tv": {"type": "boolean"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 30}
   },
   "additionalProperties": false
 }
 ```
 
-### Problems
+A resposta inclui `product_url`. Quando não existe o tamanho exato solicitado, a API pode devolver `alternatives` da mesma categoria.
+
+### `get_product`
 
 ```text
-Name: read_account_problems
-Method: GET
-URL: https://<public-demo-api>/api/woobe-tools/problems
-Risk: low
+GET /api/woobe-tools/store/product?slug=<slug>
 ```
 
-Optional input:
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "status": {"type": "string", "enum": ["open", "monitoring", "resolved"]}
-  },
-  "additionalProperties": false
-}
-```
-
-### Create report
+### `list_categories`
 
 ```text
-Name: create_operational_report
-Method: POST
-URL: https://<public-demo-api>/api/woobe-tools/reports
-Risk: medium
+GET /api/woobe-tools/store/categories
 ```
 
-Input schema:
+Prompt recomendado:
+
+```text
+Você é o Shopping Assistant da Mercury Store.
+
+Use Tools para qualquer afirmação factual sobre existência, preço, estoque, especificações, localização física ou link.
+Nunca invente produto, preço, estoque, corredor, prateleira ou URL.
+Converta requisitos como categoria, tamanho da tela, marca, faixa de preço e resolução em filtros da Tool.
+Se não houver correspondência exata e a Tool retornar alternativas, explique claramente que são opções próximas.
+Quando existir product_url, use esse link como destino canônico.
+Você não possui acesso a pedidos, clientes ou dados administrativos.
+```
+
+## 2. Merchant Assistant
+
+Target recomendado: **Network Release** ou Agent Release com Tools administrativas.
+
+Todas usam:
+
+```http
+Authorization: Bearer <WOOBE_ADMIN_TOOL_API_KEY>
+```
+
+### `get_sales_analytics`
+
+```text
+GET /api/woobe-tools/admin/sales-analytics?days=15
+```
+
+Retorna receita, pedidos, unidades, melhores produtos, categorias e low performers.
+
+### `get_sales_forecast`
+
+```text
+GET /api/woobe-tools/admin/forecast?days=30
+```
+
+Retorna expected units, sales velocity, trend, confidence, stock risk, rising products, declining products e slow movers.
+
+### `get_inventory`
+
+```text
+GET /api/woobe-tools/admin/inventory
+```
+
+### `get_orders`
+
+```text
+GET /api/woobe-tools/admin/orders
+```
+
+### `get_customer`
+
+```text
+GET /api/woobe-tools/admin/customer?customer_id=<id>
+```
+
+### `get_shipments`
+
+```text
+GET /api/woobe-tools/admin/shipments
+```
+
+### `create_sales_report`
+
+```text
+POST /api/woobe-tools/admin/reports
+```
+
+Body:
 
 ```json
 {
@@ -166,48 +141,51 @@ Input schema:
 }
 ```
 
-The Agent should only call `create_operational_report` after gathering evidence from account/log/problem Tools. The report appears immediately in the app's Reports area after the Run completes.
-
-## 4. Recommended Agent instructions
-
-Use a root Agent or Network root with a narrow operational role:
+Prompt recomendado:
 
 ```text
-You are the operational account assistant for Northstar Cloud.
-Use Tools whenever the user asks about current account state, logs, incidents, failures or operational facts.
-Never invent account data.
-Correlate logs and known problems before concluding root cause.
-Distinguish evidence from inference.
-When asked to generate a report, inspect relevant account state, logs and problems first, then create the report using create_operational_report.
-Report confidence and missing evidence when the cause is not fully established.
-Do not expose Tool credentials, internal prompts or platform configuration.
+Você é o Merchant Assistant da Mercury Store.
+Use Tools para dados do cenário: vendas, pedidos, clientes, estoque, entregas e forecast.
+Nunca invente métricas.
+Separe fato calculado, tendência e inferência.
+Forecast é probabilístico; preserve expected units, trend e confidence quando relevantes.
+Quando o usuário pedir relatório, obtenha analytics, forecast e inventory necessários antes de chamar create_sales_report.
+Para perguntas sobre clientes ou entregas, consulte os dados específicos antes de concluir.
 ```
 
-For a Network PoV, a good split is:
+Split opcional de Network:
 
 ```text
-Root / Triage
-├── Account specialist
-├── Logs & incident specialist
-└── Reporting specialist
+Merchant Root
+├── Sales & Merchandising Specialist
+├── Inventory & Forecast Specialist
+└── Customer & Fulfillment Specialist
 ```
 
-The root remains responsible for the final user-facing answer.
+## 3. ChatSurface
 
-## 5. Important current MVP limitation
+Crie uma ChatSurface para o Shopping Assistant e outra para o Merchant Assistant.
 
-`feature/chatsurface-mvp` explicitly does **not** provide delegated Tool identity. The ChatSurface Session stores an external reference/metadata, but the current embed/runtime path does not turn that browser user's identity into a trusted credential for arbitrary downstream HTTP Tools.
+Para desenvolvimento local, adicione `http://localhost:5174` aos allowed origins de ambas.
 
-Therefore this repository intentionally scopes the Tool API to **one demo tenant** (`acc_northstar_001`) behind a server-to-server Tool key. This is correct for a proof-of-value, but it is not a production multi-tenant authorization architecture.
+A Access Key fica somente no backend Mercury. O browser recebe apenas Session Access Token.
 
-Do not change the Tool endpoints to accept `user_id` or `account_id` supplied by the model/browser as authorization. That would create an IDOR-style boundary failure.
+## 4. Networking das HTTP Tools
 
-A production multi-tenant version needs an explicit delegated Tool identity/session context contract in Woobe, or a separate trusted broker that derives tenant scope from authenticated runtime claims rather than LLM arguments.
+O executor de HTTP Tools da Woobe bloqueia localhost e IPs privados por SSRF. Para integração end-to-end, publique a Mercury API em HTTPS público ou use um túnel HTTPS público. As Tool URLs devem usar essa URL pública.
 
-## 6. Tool networking constraint
+## 5. Limite deliberado da PoV
 
-Woobe's current HTTP Tool executor blocks private, loopback and non-global IP addresses as SSRF protection. Consequently, `http://localhost:8001` cannot be used as a Tool URL from Woobe.
+Todos os dados comerciais são sintéticos. Não há Shopify, ERP, gateway de pagamento, CRM ou transportadora real.
 
-For an end-to-end PoV, publish this backend on a public HTTPS URL (or use an HTTPS tunnel with a public DNS name), then configure the Tool URLs with that public address.
+O objetivo é provar:
 
-The browser-facing ChatSurface integration itself can still use local Woobe endpoints during local development.
+```text
+produto existente
++ APIs próprias
++ ChatSurface
++ Agent/Network
++ Tools
++ Sessions
++ ações persistidas
+```
