@@ -2,7 +2,26 @@
 
 A proof-of-value SaaS application showing an AI account assistant embedded into a real product surface.
 
-The end-user application is branded **Northstar Cloud**. It deliberately does not present the AI control plane to the user. The user sees an account console with operational data and an assistant capable of investigating that data and producing reports.
+The end-user application is branded **Northstar Cloud**. It deliberately does not present the AI control plane to the user. The user sees an operational SaaS console with service health, logs, detected problems and reports, while the assistant is operated through Woobe.
+
+## Mock-only demo dataset
+
+All operational telemetry in this repository is intentionally synthetic. Northstar does not wait for, ingest or depend on any external monitoring system for this proof of value.
+
+The API seeds a fresh, internally consistent mock incident window on every startup. The current dataset includes several independent failure patterns so the assistant is not reduced to a single authentication example:
+
+- database connection-pool saturation causing downstream API failures;
+- revoked production credential still used by a legacy importer;
+- intermittent customer webhook HTTP 503 failures;
+- payment-provider authorization and capture timeouts;
+- notification queue backlog and provider HTTP 429 responses;
+- Redis cache hit-rate degradation, memory pressure and evictions;
+- API Gateway traffic approaching the configured request-rate limit;
+- a transient billing/invoice lock that recovered through retry.
+
+The mock logs contain INFO, WARN and ERROR events across `api-gateway`, `database`, `orders-api`, `auth-api`, `webhook-worker`, `payments-api`, `notifications-worker`, `cache`, `billing-api` and `reporting-api`. Detected problems contain evidence that can be correlated with those logs. Timestamps are regenerated relative to application startup so the demo always looks current.
+
+Reports created by the Woobe assistant remain normal application data and are persisted in SQLite; only synthetic logs and detected problems are refreshed on startup.
 
 ## What the demo proves
 
@@ -11,6 +30,7 @@ The end-user application is branded **Northstar Cloud**. It deliberately does no
 - Short-lived browser access; the ChatSurface Access Key never reaches the frontend.
 - Account data, logs and detected problems exposed as narrow HTTP Tools.
 - Agent/Network reasoning over current operational evidence.
+- Correlation across several simultaneous mock incidents rather than one hard-coded answer path.
 - AI-generated reports persisted back into the SaaS through a Tool call.
 - Existing ChatSurface history/streaming behavior instead of a custom chat implementation.
 
@@ -87,14 +107,21 @@ Inside the backend container, `WOOBE_API_BASE_URL` defaults to `http://host.dock
 ## Demo flow
 
 1. Sign in with the seeded demo account.
-2. Review account usage, current service health, logs and detected problems.
+2. Review current service health, mock logs and detected problems.
 3. Ask the embedded assistant questions such as:
-   - `Why are authentication requests failing?`
-   - `Is the webhook problem still happening?`
-   - `What are the most important errors in the recent logs?`
+   - `What is the most severe problem happening right now?`
+   - `Why are order requests returning 503?`
+   - `Is the database problem related to the order failures?`
+   - `What is happening with payments?`
+   - `Why are notifications delayed?`
+   - `Which failures are external dependencies and which are internal?`
+   - `Is the webhook problem related to the authentication problem?`
+   - `Which issues should engineering prioritize first and why?`
    - `Generate an executive operational report with findings and recommendations.`
-4. The configured Woobe Agent/Network reads the application's Tool API.
+4. The configured Woobe Agent/Network reads the application's Tool API and correlates the synthetic evidence.
 5. When a report is created, the Reports area updates after the ChatSurface Run completes.
+
+The important behavior is that the assistant must inspect the mock evidence through Tools. There is no hidden integration with a real monitoring provider and no expected single canned diagnosis.
 
 ## Architecture
 
@@ -119,6 +146,8 @@ Woobe ChatSurface / Runtime
                     │
                     ▼
            ExampleUsageWoobe001 API
+                │
+                └── deterministic mock operational dataset
 ```
 
 The permanent ChatSurface Access Key exists only in `backend` and is used for Session creation/token issuance.
